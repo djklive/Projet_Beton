@@ -1,0 +1,16 @@
+"""
+Fichier de configuration exemple
+Copiez ce fichier en 'config.py' et modifiez les identifiants selon votre configuration PostgreSQL
+"""
+
+# Configuration PostgreSQL
+# Format: postgresql+psycopg2://utilisateur:mot_de_passe@localhost:port/base_de_donnees
+POSTGRES_USER = "postgres"
+POSTGRES_PASSWORD = "votre_mot_de_passe"  # ⚠️ MODIFIEZ ICI
+POSTGRES_HOST = "localhost"
+POSTGRES_PORT = "5432"
+POSTGRES_DB = "db_patients"
+
+# Construction de l'URL complète
+DATABASE_URL = f"postgresql+psycopg2://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+
