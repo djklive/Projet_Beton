@@ -1337,9 +1337,7 @@ def server(input, output, session):
                 select_cols = []
                 if 'id' in columns:
                     select_cols.append('id')
-                else:
-                    # Utiliser ROW_NUMBER() si id n'existe pas
-                    select_cols.append('ROW_NUMBER() OVER (ORDER BY nom_projet) as id')
+                # On n'ajoute pas ROW_NUMBER() car on utilisera nom_projet comme identifiant
                 
                 select_cols.extend(['nom_projet', 'type_structure'])
                 
@@ -1374,15 +1372,11 @@ def server(input, output, session):
             )
         
         # Créer les options pour le select
-        # IMPORTANT: Les clés sont les IDs (entiers ou noms), les valeurs sont les labels (texte)
+        # IMPORTANT: Utiliser nom_projet comme identifiant unique (car id n'existe pas dans la table)
         options = {}
         for idx, row in df.iterrows():
-            # Utiliser l'index si id n'existe pas, sinon utiliser id
-            if 'id' in row and pd.notna(row['id']):
-                projet_id = int(row['id'])
-            else:
-                # Utiliser le nom_projet comme identifiant unique
-                projet_id = str(row['nom_projet'])
+            # Toujours utiliser nom_projet comme identifiant (même si id existe, pour cohérence)
+            projet_id = str(row['nom_projet'])
             
             nom = row['nom_projet']
             type_struct = row.get('type_structure', 'N/A')
@@ -1405,8 +1399,9 @@ def server(input, output, session):
             else:
                 label = f"{nom} ({type_struct}) - {volume:.1f}m³ - {cout:.0f}€"
             
-            # Clé = ID (entier ou string), Valeur = Label (texte)
+            # Clé = nom_projet (string), Valeur = Label (texte)
             options[projet_id] = label
+            print(f"📝 Projet ajouté: {projet_id} -> {label}")
         
         return ui.tags.div(
             ui.input_select(
@@ -1426,40 +1421,24 @@ def server(input, output, session):
             return None
         
         try:
-            # S'assurer que projet_id est un entier
-            if isinstance(projet_id, str):
-                # Si c'est une chaîne, essayer de la convertir
-                try:
-                    projet_id = int(projet_id)
-                except ValueError:
-                    print(f"ID de projet invalide: {projet_id}")
-                    return None
+            # projet_id est maintenant toujours le nom_projet (string)
+            projet_id_str = str(projet_id) if projet_id is not None else None
             
-            print(f"Chargement du projet ID: {projet_id} (type: {type(projet_id).__name__})")
+            if projet_id_str is None:
+                print("⚠️ Aucun projet sélectionné")
+                return None
+            
+            print(f"Chargement du projet: '{projet_id_str}' (type: {type(projet_id_str).__name__})")
             
             with engine.connect() as conn:
-                # Vérifier si la colonne id existe
-                result = conn.execute(text("""
-                    SELECT column_name 
-                    FROM information_schema.columns 
-                    WHERE table_name = 'projets_beton' AND column_name = 'id';
-                """))
-                has_id_column = result.fetchone() is not None
-                
-                if has_id_column:
-                    # Utiliser id si disponible
-                    df = pd.read_sql(
-                        text("SELECT * FROM projets_beton WHERE id = :id"),
-                        conn,
-                        params={"id": int(projet_id)}
-                    )
-                else:
-                    # Utiliser nom_projet comme identifiant
-                    df = pd.read_sql(
-                        text("SELECT * FROM projets_beton WHERE nom_projet = :nom"),
-                        conn,
-                        params={"nom": str(projet_id)}
-                    )
+                # Toujours utiliser nom_projet comme identifiant (car c'est ce qu'on passe depuis le select)
+                df = pd.read_sql(
+                    text("SELECT * FROM projets_beton WHERE nom_projet = :nom"),
+                    conn,
+                    params={"nom": projet_id_str}
+                )
+                print(f"🔍 Requête: SELECT * FROM projets_beton WHERE nom_projet = '{projet_id_str}'")
+                print(f"📊 Résultats trouvés: {len(df)} ligne(s)")
                 if not df.empty:
                     print(f"Projet chargé: {df.iloc[0].get('nom_projet', 'N/A')}")
                     return df.iloc[0].to_dict()
