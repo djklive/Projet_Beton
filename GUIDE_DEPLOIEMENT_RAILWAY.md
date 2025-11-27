@@ -138,31 +138,36 @@ Railway utilisera automatiquement la variable `DATABASE_URL` créée par le serv
 4. Connectez-vous à PostgreSQL : `railway connect postgres`
 5. Exécutez : `psql < create_table_genie_civil.sql`
 
-**Option C : Via un script Python temporaire**
+**Option C : Via Railway CLI (Recommandé)**
 
-Créez un fichier `init_db.py` :
+1. **Ouvrir PowerShell dans le dossier du projet** :
+   ```powershell
+   cd "C:\Users\DELL\Downloads\Mon site web cour\Python"
+   ```
 
-```python
-from sqlalchemy import create_engine, text
-import os
+2. **Lier le projet** (sélectionner le **service Python**, pas PostgreSQL) :
+   ```powershell
+   railway link
+   ```
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-if DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
+3. **Initialiser la base de données** :
+   ```powershell
+   railway run python init_db_railway.py
+   ```
 
-engine = create_engine(DATABASE_URL)
+**⚠️ IMPORTANT** : 
+- Assurez-vous d'être dans le bon répertoire
+- Sélectionnez le **service Python** lors de `railway link`, pas le service PostgreSQL
 
-with open("create_table_genie_civil.sql", "r", encoding="utf-8") as f:
-    sql_script = f.read()
+**Option D : Via l'Interface Web Railway (Alternative)**
 
-with engine.connect() as conn:
-    conn.execute(text(sql_script))
-    conn.commit()
+1. Dans Railway, cliquez sur votre **service PostgreSQL**
+2. Onglet **"Data"** ou **"Query"** 
+3. Ouvrez le fichier `INIT_DB_SIMPLE.sql`
+4. Copiez-collez tout le contenu dans l'éditeur SQL
+5. Cliquez sur **"Run"** ou **"Execute"**
 
-print("Base de données initialisée avec succès!")
-```
-
-Puis exécutez-le une fois sur Railway (via Railway CLI ou en ajoutant temporairement une commande de démarrage).
+Voir `GUIDE_INITIALISATION_DB.md` pour plus de détails et de méthodes alternatives.
 
 ---
 

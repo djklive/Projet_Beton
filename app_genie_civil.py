@@ -21,63 +21,154 @@ from scipy import stats
 # Support des variables d'environnement pour Railway et autres plateformes
 import os
 
-# Récupérer les variables d'environnement (Railway, Heroku, etc.)
-# Si DATABASE_URL est défini (format Railway/Heroku), l'utiliser directement
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-if DATABASE_URL:
-    # Railway/Heroku fournissent DATABASE_URL au format: postgresql://user:pass@host:port/db
-    # Adapter si nécessaire pour psycopg2
-    if DATABASE_URL.startswith("postgresql://"):
-        DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
-else:
-    # Configuration locale (développement)
-    POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
-    POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "Djoko002&")
-    POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
-    POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
-    POSTGRES_DB = os.getenv("POSTGRES_DB", "db_genie_civil")
+# Fonction pour obtenir l'URL de la base de données
+def get_database_url():
+    """Récupère l'URL de connexion PostgreSQL depuis les variables d'environnement"""
+    # Railway/Heroku fournissent DATABASE_URL directement
+    db_url = os.getenv("DATABASE_URL")
     
-    # Encoder le mot de passe pour gérer les caractères spéciaux comme &
-    encoded_password = quote_plus(POSTGRES_PASSWORD)
-    DATABASE_URL = f"postgresql+psycopg2://{POSTGRES_USER}:{encoded_password}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
-engine = create_engine(DATABASE_URL, echo=False)
-
-# Test de connexion au démarrage
-print("Test de connexion à PostgreSQL...")
-try:
-    with engine.connect() as conn:
-        result = conn.execute(text("SELECT version();"))
-        version = result.fetchone()[0]
-        print(f"Connexion PostgreSQL réussie! Version: {version[:50]}...")
+    if db_url:
+        # Railway/Heroku fournissent DATABASE_URL au format: postgresql://user:pass@host:port/db
+        # Adapter si nécessaire pour psycopg2
+        if db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+        print(f"[CONFIG] Utilisation de DATABASE_URL depuis variables d'environnement")
+        return db_url
+    else:
+        # Configuration locale (développement) via variables individuelles
+        POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
+        POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "Djoko002&")
+        POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
+        POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+        POSTGRES_DB = os.getenv("POSTGRES_DB", "db_genie_civil")
         
-        # Vérifier que la table existe
-        result = conn.execute(text("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_name = 'projets_beton'
-            );
-        """))
-        table_exists = result.fetchone()[0]
-        if table_exists:
-            print("Table 'projets_beton' existe")
+        # Encoder le mot de passe pour gérer les caractères spéciaux comme &
+        encoded_password = quote_plus(POSTGRES_PASSWORD)
+        db_url = f"postgresql+psycopg2://{POSTGRES_USER}:{encoded_password}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+        print(f"[CONFIG] Utilisation de configuration locale (host: {POSTGRES_HOST})")
+        return db_url
+
+# Créer l'engine avec lazy initialization (ne se connecte pas immédiatement)
+DATABASE_URL = get_database_url()
+engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+
+# Fonction pour tester la connexion (appelée de manière non-bloquante)
+def test_connection():
+    """Teste la connexion PostgreSQL de manière non-bloquante"""
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT version();"))
+            version = result.fetchone()[0]
+            print(f"[DB] Connexion PostgreSQL réussie! Version: {version[:50]}...")
             
-            # Vérifier les colonnes
+            # Vérifier que la table existe
             result = conn.execute(text("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'projets_beton'
-                ORDER BY ordinal_position;
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'projets_beton'
+                );
             """))
-            columns = [row[0] for row in result.fetchall()]
-            print(f"Colonnes disponibles: {columns}")
-        else:
-            print("Table 'projets_beton' N'EXISTE PAS - Veuillez exécuter create_table_genie_civil.sql")
-except Exception as e:
-    print(f"ERREUR DE CONNEXION: {e}")
-    print("Vérifiez vos identifiants PostgreSQL et que le serveur est démarré")
-    import traceback
-    traceback.print_exc()
+            table_exists = result.fetchone()[0]
+            if table_exists:
+                print("[DB] Table 'projets_beton' existe")
+            else:
+                print("[DB] ⚠️ Table 'projets_beton' N'EXISTE PAS - Veuillez exécuter create_table_genie_civil.sql")
+            return True
+    except Exception as e:
+        print(f"[DB] ⚠️ Erreur de connexion (non bloquant): {str(e)[:100]}")
+        print("[DB] La connexion sera réessayée lors de la première utilisation")
+        return False
+
+# Fonction pour initialiser la table si elle n'existe pas
+def init_database_table():
+    """Crée la table projets_beton si elle n'existe pas"""
+    try:
+        with engine.connect() as conn:
+            # Vérifier si la table existe
+            result = conn.execute(text("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'projets_beton'
+                );
+            """))
+            table_exists = result.fetchone()[0]
+            
+            if not table_exists:
+                print("[DB] Table 'projets_beton' n'existe pas. Création en cours...")
+                # Lire et exécuter le script SQL
+                try:
+                    with open("create_table_genie_civil.sql", "r", encoding="utf-8") as f:
+                        sql_script = f.read()
+                    conn.execute(text(sql_script))
+                    conn.commit()
+                    print("[DB] ✅ Table 'projets_beton' créée avec succès!")
+                except FileNotFoundError:
+                    print("[DB] ⚠️ Fichier create_table_genie_civil.sql introuvable")
+                    print("[DB] Création de la table avec le script intégré...")
+                    # Script SQL intégré comme fallback
+                    create_table_sql = """
+                    CREATE TABLE IF NOT EXISTS projets_beton (
+                        id SERIAL PRIMARY KEY,
+                        nom_projet VARCHAR(255) NOT NULL,
+                        date_creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        type_structure VARCHAR(100),
+                        forme_structure VARCHAR(50),
+                        longueur_m NUMERIC(10, 2),
+                        largeur_m NUMERIC(10, 2),
+                        hauteur_m NUMERIC(10, 2),
+                        epaisseur_m NUMERIC(10, 3),
+                        charge_statique_kn NUMERIC(10, 2),
+                        charge_dynamique_kn NUMERIC(10, 2),
+                        charge_vent_kn NUMERIC(10, 2),
+                        charge_neige_kn NUMERIC(10, 2),
+                        charge_seisme_kn NUMERIC(10, 2),
+                        type_beton VARCHAR(100),
+                        resistance_mpa NUMERIC(6, 2),
+                        dosage_ciment_kg_m3 NUMERIC(6, 2),
+                        dosage_eau_kg_m3 NUMERIC(6, 2),
+                        dosage_sable_kg_m3 NUMERIC(6, 2),
+                        dosage_gravier_kg_m3 NUMERIC(6, 2),
+                        coefficient_securite NUMERIC(4, 2),
+                        volume_beton_m3 NUMERIC(10, 3),
+                        quantite_ciment_kg NUMERIC(10, 2),
+                        quantite_eau_kg NUMERIC(10, 2),
+                        quantite_sable_kg NUMERIC(10, 2),
+                        quantite_gravier_kg NUMERIC(10, 2),
+                        cout_ciment_eur NUMERIC(10, 2),
+                        cout_sable_eur NUMERIC(10, 2),
+                        cout_gravier_eur NUMERIC(10, 2),
+                        cout_main_oeuvre_eur NUMERIC(10, 2),
+                        cout_total_eur NUMERIC(10, 2),
+                        charge_totale_kn NUMERIC(10, 2),
+                        contrainte_mpa NUMERIC(6, 2),
+                        marge_securite NUMERIC(6, 2),
+                        largeur_poutre_m NUMERIC(6, 2),
+                        hauteur_poutre_m NUMERIC(6, 2),
+                        largeur_colonne_m NUMERIC(6, 2),
+                        epaisseur_dalle_m NUMERIC(6, 2),
+                        resistance_structure_mpa NUMERIC(6, 2),
+                        deformation NUMERIC(10, 6),
+                        deplacement_mm NUMERIC(10, 2),
+                        duree_projet_jours INTEGER,
+                        cout_materiaux_eur NUMERIC(10, 2),
+                        notes TEXT,
+                        statut VARCHAR(50)
+                    );
+                    """
+                    conn.execute(text(create_table_sql))
+                    conn.commit()
+                    print("[DB] ✅ Table créée avec le script intégré!")
+            else:
+                print("[DB] Table 'projets_beton' existe déjà")
+    except Exception as e:
+        print(f"[DB] ⚠️ Erreur lors de l'initialisation de la table: {str(e)[:200]}")
+        print("[DB] L'application continuera, mais certaines fonctionnalités peuvent ne pas fonctionner")
+
+# Tester la connexion et initialiser la table en arrière-plan (non bloquant)
+print("[INIT] Initialisation de l'application...")
+print(f"[INIT] DATABASE_URL configurée: {'Oui' if DATABASE_URL else 'Non'}")
+if test_connection():
+    init_database_table()
 
 # Configuration du style des graphiques
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -1765,10 +1856,13 @@ Nombre d'observations utilisées: {len(data_clean)}
 
 
 # ============================================================================
-# LANCEMENT DE L'APPLICATION
+# CRÉATION DE L'APPLICATION
 # ============================================================================
 
+# Créer l'application au niveau du module pour que Railway puisse la trouver
+app = App(app_ui, server)
+
+# Lancer l'application seulement si exécutée directement (développement local)
 if __name__ == "__main__":
-    app = App(app_ui, server)
     app.run(port=8000, reload=False)
 
