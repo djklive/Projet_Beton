@@ -25,17 +25,25 @@ import os
 def get_database_url():
     """Récupère l'URL de connexion PostgreSQL depuis les variables d'environnement"""
     # Railway/Heroku fournissent DATABASE_URL directement
+    # Vérifier d'abord DATABASE_URL (priorité)
     db_url = os.getenv("DATABASE_URL")
     
+    # Debug: afficher si DATABASE_URL existe (sans afficher la valeur complète pour sécurité)
     if db_url:
+        print(f"[CONFIG] DATABASE_URL trouvée (longueur: {len(db_url)} caractères)")
+        print(f"[CONFIG] DATABASE_URL commence par: {db_url[:20]}...")
+        
         # Railway/Heroku fournissent DATABASE_URL au format: postgresql://user:pass@host:port/db
         # Adapter si nécessaire pour psycopg2
         if db_url.startswith("postgresql://"):
             db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
-        print(f"[CONFIG] Utilisation de DATABASE_URL depuis variables d'environnement")
+            print(f"[CONFIG] URL adaptée pour psycopg2")
+        
+        print(f"[CONFIG] ✅ Utilisation de DATABASE_URL depuis variables d'environnement Railway")
         return db_url
     else:
         # Configuration locale (développement) via variables individuelles
+        print(f"[CONFIG] ⚠️ DATABASE_URL non trouvée, utilisation de la configuration locale")
         POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
         POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "Djoko002&")
         POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
@@ -45,7 +53,7 @@ def get_database_url():
         # Encoder le mot de passe pour gérer les caractères spéciaux comme &
         encoded_password = quote_plus(POSTGRES_PASSWORD)
         db_url = f"postgresql+psycopg2://{POSTGRES_USER}:{encoded_password}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
-        print(f"[CONFIG] Utilisation de configuration locale (host: {POSTGRES_HOST})")
+        print(f"[CONFIG] Configuration locale (host: {POSTGRES_HOST}, db: {POSTGRES_DB})")
         return db_url
 
 # Créer l'engine avec lazy initialization (ne se connecte pas immédiatement)
@@ -166,9 +174,20 @@ def init_database_table():
 
 # Tester la connexion et initialiser la table en arrière-plan (non bloquant)
 print("[INIT] Initialisation de l'application...")
-print(f"[INIT] DATABASE_URL configurée: {'Oui' if DATABASE_URL else 'Non'}")
+print(f"[INIT] DATABASE_URL finale configurée: {'Oui' if DATABASE_URL else 'Non'}")
+if DATABASE_URL:
+    # Afficher un aperçu de l'URL (sans les credentials)
+    url_parts = DATABASE_URL.split("@")
+    if len(url_parts) > 1:
+        print(f"[INIT] Connexion à: ...@{url_parts[1]}")
+    else:
+        print(f"[INIT] Format URL: {DATABASE_URL[:30]}...")
+
 if test_connection():
     init_database_table()
+else:
+    print("[INIT] ⚠️ Connexion échouée au démarrage, mais l'application continuera")
+    print("[INIT] La connexion sera réessayée lors de la première utilisation")
 
 # Configuration du style des graphiques
 plt.style.use('seaborn-v0_8-whitegrid')
