@@ -1323,10 +1323,43 @@ def server(input, output, session):
         input.submit_btn()  # Se met à jour quand un nouveau projet est ajouté
         try:
             with engine.connect() as conn:
-                df = pd.read_sql(text("SELECT id, nom_projet, type_structure, date_creation, volume_beton_m3, cout_total_eur FROM projets_beton ORDER BY date_creation DESC"), conn)
+                # Vérifier d'abord quelles colonnes existent
+                result = conn.execute(text("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'projets_beton'
+                    ORDER BY ordinal_position;
+                """))
+                columns = [row[0] for row in result.fetchall()]
+                print(f"📋 Colonnes disponibles: {columns}")
+                
+                # Construire la requête en fonction des colonnes disponibles
+                select_cols = []
+                if 'id' in columns:
+                    select_cols.append('id')
+                else:
+                    # Utiliser ROW_NUMBER() si id n'existe pas
+                    select_cols.append('ROW_NUMBER() OVER (ORDER BY nom_projet) as id')
+                
+                select_cols.extend(['nom_projet', 'type_structure'])
+                
+                if 'date_creation' in columns:
+                    select_cols.append('date_creation')
+                
+                select_cols.extend(['volume_beton_m3', 'cout_total_eur'])
+                
+                # Construire la clause ORDER BY
+                order_by = 'date_creation DESC' if 'date_creation' in columns else 'nom_projet ASC'
+                
+                query = f"SELECT {', '.join(select_cols)} FROM projets_beton ORDER BY {order_by}"
+                print(f"🔍 Requête SQL: {query}")
+                
+                df = pd.read_sql(text(query), conn)
                 return df
         except Exception as e:
             print(f"Erreur de chargement des projets: {e}")
+            import traceback
+            traceback.print_exc()
             return pd.DataFrame()
     
     @render.ui
@@ -1341,27 +1374,38 @@ def server(input, output, session):
             )
         
         # Créer les options pour le select
-        # IMPORTANT: Les clés sont les IDs (entiers), les valeurs sont les labels (texte)
+        # IMPORTANT: Les clés sont les IDs (entiers ou noms), les valeurs sont les labels (texte)
         options = {}
-        for _, row in df.iterrows():
-            projet_id = int(row['id'])
+        for idx, row in df.iterrows():
+            # Utiliser l'index si id n'existe pas, sinon utiliser id
+            if 'id' in row and pd.notna(row['id']):
+                projet_id = int(row['id'])
+            else:
+                # Utiliser le nom_projet comme identifiant unique
+                projet_id = str(row['nom_projet'])
+            
             nom = row['nom_projet']
             type_struct = row.get('type_structure', 'N/A')
-            volume = row.get('volume_beton_m3', 0)
-            cout = row.get('cout_total_eur', 0)
-            date_crea = row.get('date_creation', '')
+            volume = row.get('volume_beton_m3', 0) if pd.notna(row.get('volume_beton_m3')) else 0
+            cout = row.get('cout_total_eur', 0) if pd.notna(row.get('cout_total_eur')) else 0
+            date_crea = row.get('date_creation', None)
             
             # Formater la date
-            if pd.notna(date_crea):
+            if pd.notna(date_crea) and date_crea is not None:
                 if isinstance(date_crea, pd.Timestamp):
                     date_str = date_crea.strftime('%d/%m/%Y')
                 else:
                     date_str = str(date_crea)[:10]
             else:
-                date_str = "N/A"
+                date_str = ""
             
-            label = f"{nom} ({type_struct}) - {volume:.1f}m³ - {cout:.0f}€"
-            # Clé = ID (entier), Valeur = Label (texte)
+            # Créer le label avec ou sans date
+            if date_str:
+                label = f"{nom} ({type_struct}) - {volume:.1f}m³ - {cout:.0f}€ - {date_str}"
+            else:
+                label = f"{nom} ({type_struct}) - {volume:.1f}m³ - {cout:.0f}€"
+            
+            # Clé = ID (entier ou string), Valeur = Label (texte)
             options[projet_id] = label
         
         return ui.tags.div(
@@ -1394,11 +1438,28 @@ def server(input, output, session):
             print(f"Chargement du projet ID: {projet_id} (type: {type(projet_id).__name__})")
             
             with engine.connect() as conn:
-                df = pd.read_sql(
-                    text("SELECT * FROM projets_beton WHERE id = :id"),
-                    conn,
-                    params={"id": int(projet_id)}  # S'assurer que c'est un entier
-                )
+                # Vérifier si la colonne id existe
+                result = conn.execute(text("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'projets_beton' AND column_name = 'id';
+                """))
+                has_id_column = result.fetchone() is not None
+                
+                if has_id_column:
+                    # Utiliser id si disponible
+                    df = pd.read_sql(
+                        text("SELECT * FROM projets_beton WHERE id = :id"),
+                        conn,
+                        params={"id": int(projet_id)}
+                    )
+                else:
+                    # Utiliser nom_projet comme identifiant
+                    df = pd.read_sql(
+                        text("SELECT * FROM projets_beton WHERE nom_projet = :nom"),
+                        conn,
+                        params={"nom": str(projet_id)}
+                    )
                 if not df.empty:
                     print(f"Projet chargé: {df.iloc[0].get('nom_projet', 'N/A')}")
                     return df.iloc[0].to_dict()
